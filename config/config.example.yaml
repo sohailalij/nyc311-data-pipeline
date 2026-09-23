@@ -1,0 +1,47 @@
+# Copy this file to config.yaml and fill in real values.
+# config.yaml is git-ignored and must never be committed.
+
+environment: local   # local | cloud
+
+paths:
+  raw_data_dir: "data/raw"
+  sample_data_dir: "data/sample"
+  processed_data_dir: "data/processed"
+  logs_dir: "logs"
+
+spark:
+  app_name: "nyc311-pipeline"
+  master: "local[*]"
+  shuffle_partitions: 8
+
+hive:
+  metastore_uri: "thrift://localhost:9083"
+  database: "analytics_db"
+
+postgres:
+  host: "localhost"
+  port: 5432
+  database: "nyc311_analytics"
+  user: "CHANGE_ME"
+  password: "CHANGE_ME"          # never commit a real password here
+  schema: "public"
+
+aws:
+  # Only used once the project moves to the cloud migration stage.
+  region: "us-east-1"
+  s3_bucket: "CHANGE_ME"
+  s3_raw_prefix: "raw/"
+  # Credentials are never stored here. Use the AWS CLI's configured
+  # profile (~/.aws/credentials) or environment variables instead:
+  #   AWS_ACCESS_KEY_ID
+  #   AWS_SECRET_ACCESS_KEY
+  profile_name: "default"
+
+data_quality:
+  max_missing_id_rate: 0.02
+  max_invalid_date_rate: 0.02
+  max_duplicate_rate: 0.05
+
+notifications:
+  # Optional, only relevant if you wire up alerting later.
+  alert_email: "CHANGE_ME"

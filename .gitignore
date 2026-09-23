@@ -1,0 +1,56 @@
+# --- Credentials and secrets, never commit these ---
+config/config.yaml
+.env
+*.pem
+*.key
+aws_credentials*
+*.credentials
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+
+# --- Data (raw/processed data is large and should not live in Git) ---
+data/raw/*
+!data/raw/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
+*.csv
+*.parquet
+!data/sample/*.csv
+
+# --- Spark ---
+spark-warehouse/
+metastore_db/
+derby.log
+
+# --- Hive ---
+hive/warehouse/
+
+# --- PostgreSQL local data ---
+pgdata/
+
+# --- Jenkins ---
+jenkins/workspace/
+
+# --- Tableau (workbooks with embedded credentials/extracts can be large) ---
+*.twbx
+*.hyper
+
+# --- OS / editor ---
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# --- Logs ---
+logs/
+*.log
