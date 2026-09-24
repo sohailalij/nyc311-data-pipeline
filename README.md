@@ -15,7 +15,7 @@ This project is under active development. Modules are being built and
 checked off in order.
 
 - [x] 1. Project setup
-- [ ] 2. Data acquisition
+- [ ] 2. Data acquisition (script and docs ready, pending your first local run)
 - [ ] 3. Reference tables
 - [ ] 4. Ingestion layer
 - [ ] 5. Spark cleaning and transformation
@@ -36,8 +36,10 @@ checked off in order.
 nyc311-data-pipeline/
 ├── data/
 │   ├── raw/            raw source files (git-ignored, not committed)
-│   └── sample/          small sample files safe to commit for reproducibility
+│   ├── sample/          small sample files safe to commit for reproducibility
+│   └── metadata/        acquisition run manifests (safe to commit, no raw data in them)
 ├── src/
+│   ├── acquisition/       download script for the NYC 311 source data
 │   ├── ingestion/        schema validation, ingestion logging
 │   ├── spark/            cleaning, transformation, aggregation
 │   ├── hive/              Hive table DDL
@@ -67,7 +69,11 @@ nyc311-data-pipeline/
    ```bash
    cp config/config.example.yaml config/config.yaml
    ```
-4. Further setup instructions (Spark, Hive, PostgreSQL, Jenkins, AWS) will be
+4. Download the raw data (see `docs/Data_Acquisition.md` for full details):
+   ```bash
+   python src/acquisition/download_311_data.py --start 2023-01-01 --end 2023-12-31
+   ```
+5. Further setup instructions (Spark, Hive, PostgreSQL, Jenkins, AWS) will be
    added here as each module is completed.
 
 ## Cost

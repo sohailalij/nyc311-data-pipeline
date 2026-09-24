@@ -37,6 +37,13 @@ aws:
   #   AWS_SECRET_ACCESS_KEY
   profile_name: "default"
 
+acquisition:
+  dataset_id: "erm2-nwe9"          # NYC 311 Service Requests from 2010 to Present
+  start_date: "2023-01-01"
+  end_date: "2023-12-31"
+  max_records: null                 # set to a small number for a quick test pull
+  app_token: ""                     # optional, free, raises the Socrata rate limit
+
 data_quality:
   max_missing_id_rate: 0.02
   max_invalid_date_rate: 0.02
