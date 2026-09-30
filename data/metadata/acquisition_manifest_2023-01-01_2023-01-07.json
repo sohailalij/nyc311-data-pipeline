@@ -1,0 +1,12 @@
+{
+  "dataset_id": "erm2-nwe9",
+  "dataset_name": "311 Service Requests from 2010 to Present",
+  "source_url": "https://data.cityofnewyork.us/Social-Services/311-Service-Requests-from-2010-to-Present/erm2-nwe9",
+  "query_start_date": "2023-01-01",
+  "query_end_date": "2023-01-07",
+  "max_records_cap": 5000,
+  "total_records_downloaded": 5000,
+  "output_file": "data\\raw\\311_service_requests_2023-01-01_2023-01-07.csv",
+  "started_at_utc": "2026-09-24T05:08:52.348648",
+  "finished_at_utc": "2026-09-24T05:09:01.878539"
+}

@@ -1,0 +1,16 @@
+{
+  "rows_processed": 3224725,
+  "agency_count": 14,
+  "agency_name_conflicts": {},
+  "complaint_type_count": 216,
+  "complaint_type_other_category_pct": 4.69,
+  "borough_count": 6,
+  "borough_values": {
+    "BRONX": 627785,
+    "BROOKLYN": 1000858,
+    "MANHATTAN": 685350,
+    "QUEENS": 776645,
+    "STATEN ISLAND": 128092,
+    "UNSPECIFIED": 5995
+  }
+}

@@ -7,20 +7,33 @@ Dataset ID: erm2-nwe9
 Portal page: https://data.cityofnewyork.us/Social-Services/311-Service-Requests-from-2010-to-Present/erm2-nwe9
 License: Public domain (NYC Open Data terms of use)
 
-This script requires internet access and is meant to be run on your own
-machine, not inside a sandboxed environment. No AWS or paid service is
-involved. The Socrata API is free and does not require an account, though
-a free app token (see README section below) raises the rate limit if you
-plan to pull more than a year of data.
+Pagination strategy:
+    Uses keyset pagination on a compound (created_date, unique_key)
+    cursor rather than $offset. created_date is the fast, indexed field
+    and does the heavy lifting; unique_key (stored as Text in this
+    dataset, despite the data dictionary calling it BIGINT) only breaks
+    ties between rows sharing the exact same timestamp. Sorting or
+    filtering on unique_key alone is comparatively slow since it has no
+    supporting index, and $offset pagination gets progressively slower
+    and eventually times out on large result sets. This compound
+    approach keeps each page's cost roughly constant no matter how deep
+    into the dataset you are, while staying fast.
+
+Resume behavior:
+    If the target output CSV already exists, the script reads the last
+    row's created_date and unique_key and resumes from there in append
+    mode, instead of starting over. This means an interrupted run can
+    simply be re-run with the same command.
 
 Usage:
     python src/acquisition/download_311_data.py
     python src/acquisition/download_311_data.py --start 2023-01-01 --end 2023-12-31
     python src/acquisition/download_311_data.py --max-records 100000   # quick test pull
+    python src/acquisition/download_311_data.py --restart              # ignore existing file, start over
 
 Output:
     data/raw/311_service_requests_<start>_<end>.csv
-    data/metadata/acquisition_manifest_<timestamp>.json
+    data/metadata/acquisition_manifest_<start>_<end>.json
 """
 
 import argparse
@@ -31,13 +44,15 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
+from typing import Optional, Tuple
 
 import requests
 
 SOCRATA_BASE_URL = "https://data.cityofnewyork.us/resource/erm2-nwe9.json"
-PAGE_SIZE = 50000
-MAX_RETRIES = 5
-RETRY_BACKOFF_SECONDS = 5
+PAGE_SIZE = 25000
+MAX_RETRIES = 8
+RETRY_BACKOFF_SECONDS = 10
+REQUEST_TIMEOUT_SECONDS = 180
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 RAW_DIR = REPO_ROOT / "data" / "raw"
@@ -67,62 +82,133 @@ def parse_args():
         default=None,
         help="Optional free Socrata app token, raises the throttling limit. Not required.",
     )
+    parser.add_argument(
+        "--restart",
+        action="store_true",
+        help="Ignore any existing output file and start the download over from scratch.",
+    )
     return parser.parse_args()
 
 
-def build_where_clause(start_date: str, end_date: str) -> str:
-    return f"created_date between '{start_date}T00:00:00' and '{end_date}T23:59:59'"
+def build_where_clause(start_date: str, end_date: str, cursor: Optional[Tuple[str, str]]) -> str:
+    base = f"(created_date between '{start_date}T00:00:00' and '{end_date}T23:59:59')"
+    if cursor is not None:
+        cursor_date, cursor_key = cursor
+        # unique_key is stored as Text in this dataset despite the data
+        # dictionary calling it BIGINT, so it must be quoted as a string.
+        # created_date does the heavy lifting since it's an indexed
+        # field; unique_key only breaks ties within the same timestamp.
+        base += (
+            f" AND ((created_date > '{cursor_date}') OR "
+            f"(created_date = '{cursor_date}' AND unique_key > '{cursor_key}'))"
+        )
+    return base
 
 
-def fetch_page(session: requests.Session, where_clause: str, limit: int, offset: int, app_token: str | None):
+def get_resume_cursor(output_path: Path) -> Tuple[Optional[Tuple[str, str]], int]:
+    """
+    Reads the last complete row of an existing output CSV to find the
+    (created_date, unique_key) cursor to resume from, and counts existing
+    rows so the record count stays accurate across a resumed run.
+    Returns ((created_date, unique_key), row_count), or (None, 0) if the
+    file doesn't exist or has no usable data rows yet.
+    """
+    if not output_path.exists() or output_path.stat().st_size == 0:
+        return None, 0
+
+    with open(output_path, "r", newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        fieldnames = reader.fieldnames or []
+        if "unique_key" not in fieldnames or "created_date" not in fieldnames:
+            logger.warning("Existing file is missing created_date or unique_key, cannot resume from it safely.")
+            return None, 0
+
+        last_row = None
+        row_count = 0
+        for row in reader:
+            last_row = row
+            row_count += 1
+
+    if last_row is None:
+        return None, 0
+
+    created_date = last_row.get("created_date")
+    unique_key = last_row.get("unique_key")
+    if not created_date or not unique_key:
+        logger.warning("Last row is missing created_date or unique_key, cannot resume from it safely.")
+        return None, 0
+
+    return (created_date, unique_key), row_count
+
+
+def fetch_page(session: requests.Session, where_clause: str, limit: int, app_token: Optional[str]):
     params = {
         "$where": where_clause,
-        "$order": "created_date",
+        "$order": "created_date, unique_key",
         "$limit": limit,
-        "$offset": offset,
     }
     headers = {"X-App-Token": app_token} if app_token else {}
 
     for attempt in range(1, MAX_RETRIES + 1):
         try:
-            response = session.get(SOCRATA_BASE_URL, params=params, headers=headers, timeout=60)
+            response = session.get(
+                SOCRATA_BASE_URL, params=params, headers=headers, timeout=REQUEST_TIMEOUT_SECONDS
+            )
             if response.status_code == 200:
                 return response.json()
+
             logger.warning(
-                "Request returned status %s on attempt %s/%s (offset=%s)",
-                response.status_code, attempt, MAX_RETRIES, offset,
+                "Request returned status %s on attempt %s/%s. Response body: %s",
+                response.status_code, attempt, MAX_RETRIES, response.text[:500],
             )
+            if response.status_code == 400:
+                return None
         except requests.RequestException as exc:
             logger.warning(
-                "Request failed on attempt %s/%s (offset=%s): %s",
-                attempt, MAX_RETRIES, offset, exc,
+                "Request failed on attempt %s/%s: %s",
+                attempt, MAX_RETRIES, exc,
             )
         time.sleep(RETRY_BACKOFF_SECONDS * attempt)
 
-    raise RuntimeError(f"Failed to fetch offset {offset} after {MAX_RETRIES} attempts.")
+    return None
 
 
-def download(start_date: str, end_date: str, max_records: int | None, app_token: str | None) -> dict:
+def download(start_date: str, end_date: str, max_records: Optional[int], app_token: Optional[str], restart: bool) -> dict:
     RAW_DIR.mkdir(parents=True, exist_ok=True)
     METADATA_DIR.mkdir(parents=True, exist_ok=True)
     LOG_DIR.mkdir(parents=True, exist_ok=True)
 
-    where_clause = build_where_clause(start_date, end_date)
     output_path = RAW_DIR / f"311_service_requests_{start_date}_{end_date}.csv"
 
-    logger.info("Starting download for range %s to %s", start_date, end_date)
+    if restart and output_path.exists():
+        logger.info("--restart passed, deleting existing file %s", output_path)
+        output_path.unlink()
+
+    cursor, total_written = get_resume_cursor(output_path)
+    file_mode = "a" if cursor is not None else "w"
+
+    if cursor is not None:
+        logger.info(
+            "Existing file found with %s records already. Resuming after created_date=%s, unique_key=%s",
+            total_written, cursor[0], cursor[1],
+        )
+    else:
+        logger.info("Starting a fresh download for range %s to %s", start_date, end_date)
+
     logger.info("Output file: %s", output_path)
 
     session = requests.Session()
-    offset = 0
-    total_written = 0
-    columns_written = False
     started_at = datetime.utcnow().isoformat()
+    fieldnames = None
+    failed = False
 
-    with open(output_path, "w", newline="", encoding="utf-8") as f:
+    with open(output_path, file_mode, newline="", encoding="utf-8") as f:
         writer = None
+        if file_mode == "a":
+            with open(output_path, "r", newline="", encoding="utf-8") as existing:
+                fieldnames = csv.DictReader(existing).fieldnames
+
         while True:
-            remaining = None
             page_limit = PAGE_SIZE
             if max_records is not None:
                 remaining = max_records - total_written
@@ -130,27 +216,41 @@ def download(start_date: str, end_date: str, max_records: int | None, app_token:
                     break
                 page_limit = min(PAGE_SIZE, remaining)
 
-            page = fetch_page(session, where_clause, page_limit, offset, app_token)
+            where_clause = build_where_clause(start_date, end_date, cursor)
+            page = fetch_page(session, where_clause, page_limit, app_token)
 
-            if not page:
-                logger.info("No more records returned, stopping at offset %s", offset)
+            if page is None:
+                logger.error(
+                    "Giving up. %s records are safely saved so far. "
+                    "Check the response body logged above, fix if needed, then "
+                    "re-run the exact same command to resume from here.",
+                    total_written,
+                )
+                failed = True
                 break
 
-            if not columns_written:
+            if not page:
+                logger.info("No more records returned, download is complete.")
+                break
+
+            if fieldnames is None:
                 fieldnames = sorted({key for row in page for key in row.keys()})
                 writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
                 writer.writeheader()
-                columns_written = True
+            elif writer is None:
+                writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
 
             for row in page:
                 writer.writerow(row)
 
             total_written += len(page)
-            offset += len(page)
-            logger.info("Fetched %s records so far (offset now %s)", total_written, offset)
+            last_row = page[-1]
+            cursor = (last_row["created_date"], last_row["unique_key"])
+            f.flush()
+            logger.info("Fetched %s records so far (last created_date %s)", total_written, cursor[0])
 
             if len(page) < page_limit:
-                logger.info("Received a partial page, this is the last page.")
+                logger.info("Received a partial page, download is complete.")
                 break
 
     finished_at = datetime.utcnow().isoformat()
@@ -163,6 +263,9 @@ def download(start_date: str, end_date: str, max_records: int | None, app_token:
         "query_end_date": end_date,
         "max_records_cap": max_records,
         "total_records_downloaded": total_written,
+        "last_cursor_created_date": cursor[0] if cursor else None,
+        "last_cursor_unique_key": cursor[1] if cursor else None,
+        "completed": not failed,
         "output_file": str(output_path.relative_to(REPO_ROOT)),
         "started_at_utc": started_at,
         "finished_at_utc": finished_at,
@@ -172,7 +275,10 @@ def download(start_date: str, end_date: str, max_records: int | None, app_token:
     with open(manifest_path, "w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2)
 
-    logger.info("Done. %s records written to %s", total_written, output_path)
+    if failed:
+        logger.info("%s records written so far to %s (incomplete)", total_written, output_path)
+    else:
+        logger.info("Done. %s records written to %s", total_written, output_path)
     logger.info("Manifest written to %s", manifest_path)
 
     return manifest
@@ -180,4 +286,4 @@ def download(start_date: str, end_date: str, max_records: int | None, app_token:
 
 if __name__ == "__main__":
     args = parse_args()
-    download(args.start, args.end, args.max_records, args.app_token)
+    download(args.start, args.end, args.max_records, args.app_token, args.restart)

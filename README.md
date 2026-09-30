@@ -15,9 +15,9 @@ This project is under active development. Modules are being built and
 checked off in order.
 
 - [x] 1. Project setup
-- [ ] 2. Data acquisition (script and docs ready, pending your first local run)
-- [ ] 3. Reference tables
-- [ ] 4. Ingestion layer
+- [x] 2. Data acquisition (full year 2023, 3,224,725 records, verified)
+- [x] 3. Reference tables (dim_agency, dim_complaint_type with category, dim_borough)
+- [x] 4. Ingestion layer (99.87% pass rate, 4,316 rejected rows, all explainable)
 - [ ] 5. Spark cleaning and transformation
 - [ ] 6. Spark aggregation
 - [ ] 7. Hive warehouse
